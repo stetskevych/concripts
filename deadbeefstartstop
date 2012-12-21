@@ -1,0 +1,13 @@
+#!/bin/sh
+# If deadbeef is playing, stop it.
+# If stopped, start playing.
+# Bind this script to Shift+Pause
+# Bind ''deadbeef --play-pause'' to Pause
+
+exec >/dev/null 2>&1
+
+if ! deadbeef --nowplaying "%a" 2>&1 | grep nothing; then
+	deadbeef --stop &
+else
+	deadbeef --play &
+fi
