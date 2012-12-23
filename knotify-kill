@@ -1,0 +1,13 @@
+#!/bin/bash
+# Check and kill knotify4 when it gets STUCK
+# Save as /usr/local/bin/knotify-kill
+# Cron: */1 * * * * /usr/local/bin/knotify-kill
+
+exec 1>/dev/null 2>&1
+
+cpuload="$(ps aux | grep knotify4 | grep -v grep | head -n1 | tr -s ' ' | cut -d' '  -f3)"
+[ -z "$cpuload" ] && exit 0
+if (( "$(bc -l <<< "$cpuload > 50")" == 1 )); then
+	killall knotify4
+	logger -t knotify-kill -p user.notice "Killed knotify4! Yeah!"
+fi

@@ -1,0 +1,20 @@
+#!/bin/sh
+# /usr/local/bin/ibm-start version 0.2 20110606
+# This script enables the trackpoint (the nipple) joystick
+# on IBM Space Saver II keyboards, connected natively to PS/2
+# or using a USB->PS/2 converter
+# I've bound this to CapsLock
+# Ideally should be run by udev (not done yet)
+# /etc/udev/rules.d/91-ibm-start.rules
+# ACTION=="add", SUBSYSTEM=="usb", ATTR{product}=="CHESEN PS2 to USB Converter", RUN+="/usr/local/bin/ibm-start"
+
+export DISPLAY=:0.0
+export HOME=/home/slava
+
+# Setup IBM keyboard stick
+for device in "TPPS/2 IBM TrackPoint" "pointer:CHESEN PS2 to USB Converter"; do
+	xinput set-int-prop "$device" "Evdev Wheel Emulation" 8 1
+	xinput set-int-prop "$device" "Evdev Wheel Emulation Button" 8 2
+	# xinput set-int-prop "$device" "Evdev Wheel Emulation Timeout" 8 200
+	xinput set-int-prop "$device" "Evdev Wheel Emulation Axes" 8 6 7 4 5
+done

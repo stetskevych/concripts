@@ -1,0 +1,52 @@
+#! /bin/bash
+#----------------------------------------------------------------------
+# Description: a simple script to remove SCSI devices
+# Author: Artem S. Tashkinov <no-mail@no-mail.com>
+# Created at: Tue Sep 15 18:30:41 YEKST 2009
+# Computer: localhost.localdomain
+# System: Linux 2.6.31-k8l on i686
+#
+# Copyright (c) 2009 Artem S. Tashkinov  All rights reserved.
+#
+#----------------------------------------------------------------------
+
+strhb="hot-pluggable SCSI devices"
+DEVLIST=/proc/scsi/scsi
+
+i=1
+while read item; do
+        d_id[$i]="$item"
+        i=$((i+1))
+done < <(awk '/Host/{var=$2" "$4" "$6" "$8;gsub(/00/,"0",var);print substr(var,5)}' "$DEVLIST")
+
+i=1
+while read item; do
+        d_name[$i]="$item"
+        i=$((i+1))
+done < <(awk -F 'Vendor: | Model: | Rev: ' '/Vendor/{print $2,$3}' "$DEVLIST")
+
+if [ $i -le 1 ]; then
+        echo "No removable $strhb found. Exiting"
+        exit
+fi
+
+echo "We have found the following $strhb:"
+for ((x = 1 ; x < $i ; x++)); do
+        echo " $x: ${d_name[$x]}" | sed 's/ATA/HDD/'
+done
+
+echo -n "Please, enter a device number to remove or 0 to exit: "
+read devn
+
+if ! [ "$devn" -eq "$devn" 2> /dev/null ]; then
+        echo "Error: $devn isn't a number, bye."
+        exit 2
+fi
+
+if [ "$devn" -lt 1 -o "$devn" -ge $i -o "$devn" -eq 0 ]; then
+        echo "No action taken, bye."
+        exit
+fi
+
+echo "scsi remove-single-device ${d_id[$devn]}" > /proc/scsi/scsi
+echo "Done. Consult with dmesg to find out if the device was actually removed"
