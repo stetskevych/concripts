@@ -1,0 +1,4 @@
+#!/bin/bash
+# http://www.thingy-ma-jig.co.uk/blog/10-10-2006/mysql-drop-all-tables
+
+mysqldump -u root -p --add-drop-table --no-data "$1" | grep ^DROP | mysql -u root -p "$1"
