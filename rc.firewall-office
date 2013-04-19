@@ -1,0 +1,188 @@
+#!/bin/bash
+# rc.firewall for ebox-office
+# Bridging mode
+
+#################################
+# Set up Ethernet bridge
+if [ ! -f /dev/shm/bridge-up ]; then
+br="br0" # bridge name
+tap="tap0" # list of TAP interfaces to be bridged
+eth="eth0" # physical interface to be bridged
+eth_ip="192.168.11.180"
+eth_netmask="255.255.255.0"
+eth_broadcast="192.168.11.255"
+gw="192.168.11.128"
+
+modprobe tun
+
+for t in $tap; do
+	openvpn --mktun --dev $t
+done
+
+brctl addbr $br
+brctl addif $br $eth
+
+for t in $tap; do
+	brctl addif $br $t
+done
+
+for t in $tap; do
+	ifconfig $t 0.0.0.0 promisc up
+done
+
+ifconfig $eth 0.0.0.0 promisc up
+
+ifconfig $br $eth_ip netmask $eth_netmask broadcast $eth_broadcast
+route add default gw $gw
+
+touch /dev/shm/bridge-up # flag the bridge as UP
+fi
+
+#################################
+# Define network interfaces
+
+# VPN1: clients
+# VPN2: employees
+
+BRIDGE="br0" # eth0 + tap0
+IF_LAN="eth0" # both LAN and Internet
+# LAN10: $IF_LAN -s $NET_LOCAL10 // where computers live
+NET_LOCAL10="192.168.10.0/24"
+# LAN11: $IF_LAN -s $NET_LOCAL11 // where the linux-server lives
+NET_LOCAL11="192.168.11.0/24"
+IF_EMPVPN="tap0" # employee vpn
+IF_CLIVPN="tun0" # client vpn
+NET_CLIVPN="172.25.0.0/16"
+IF_AKSVPN="tun1"
+
+# Open ports
+port_clivpn="3000"
+port_ssh="3001"
+port_empvpn="3002"
+port_aksvpn="3004"
+
+modprobe nf_conntrack_ipv4
+
+# IPv6 is disabled on this box.
+#ip6tables -F
+#ip6tables -P INPUT DROP
+#ip6tables -P FORWARD DROP
+#ip6tables -P OUTPUT DROP
+
+iptables -F
+iptables -F -t nat
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# Get rid of all IPX's and stuff on bridge
+ebtables -F
+ebtables -A FORWARD -p IPv4 -j ACCEPT
+ebtables -A FORWARD -p ARP -j ACCEPT
+ebtables -P FORWARD DROP
+
+# Allow all from loopback
+iptables -A INPUT -i lo -j ACCEPT
+# Allow all from LAN11
+iptables -A INPUT -i $BRIDGE -s $NET_LOCAL11 -j ACCEPT
+# Rate-limit OpenSSH traffic: 5 conn / 30 min from LAN10, Internet and elsewhere
+iptables -A INPUT -p tcp --dport $port_ssh -m conntrack --ctstate NEW -m recent --set --name SSH
+iptables -A INPUT -p tcp --dport $port_ssh -m conntrack --ctstate NEW -m recent --update --seconds 1800 --hitcount 6 --rttl --name SSH -j DROP
+iptables -A INPUT -p tcp -m conntrack --ctstate NEW --dport $port_ssh -j ACCEPT
+# Allow all from LAN10
+iptables -A INPUT -i $BRIDGE -s $NET_LOCAL10 -j ACCEPT
+# Allow ESTABLISHED from Internet
+iptables -A INPUT -i $BRIDGE -m physdev --physdev-in $IF_LAN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# Accept established forwarded connections
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Accept traffic for OpenVPN (clients)
+iptables -A INPUT -i $BRIDGE -m physdev --physdev-in $IF_LAN -p udp -m conntrack --ctstate NEW --dport $port_clivpn -j ACCEPT
+# Accept traffic on the tunnel interface
+iptables -A INPUT -i $IF_CLIVPN -j ACCEPT
+# Forward traffic from client to client
+iptables -A FORWARD -i $IF_CLIVPN -o $IF_CLIVPN -j ACCEPT
+# Allow traffic from BRIDGE to VPN
+iptables -A FORWARD -i $BRIDGE -s $NET_LOCAL10 -o $IF_CLIVPN -j ACCEPT
+iptables -A FORWARD -i $BRIDGE -s $NET_LOCAL11 -o $IF_CLIVPN -j ACCEPT
+# Apply NAT to packets going from BRIDGE to VPN
+iptables -t nat -A POSTROUTING -s $NET_LOCAL10 -o $IF_CLIVPN -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $NET_LOCAL11 -o $IF_CLIVPN -j MASQUERADE
+
+# Accept traffic for OpenVPN (employees)
+iptables -A INPUT -i $BRIDGE -m physdev --physdev-in $IF_LAN -p udp -m conntrack --ctstate NEW --dport $port_empvpn -j ACCEPT
+# Forward traffic between the real and the VPN LAN segments
+iptables -A FORWARD -i $BRIDGE -s $NET_LOCAL10 -j ACCEPT
+iptables -A FORWARD -i $BRIDGE -s $NET_LOCAL11 -j ACCEPT
+
+# Accept traffic for OpenVPN (aks23)
+iptables -A INPUT -i $BRIDGE -m physdev --physdev-in $IF_LAN -p tcp -m conntrack --ctstate NEW --dport $port_aksvpn -j ACCEPT
+# Accept traffic on the tunnel interface
+iptables -A INPUT -i $IF_AKSVPN -j ACCEPT
+# Allow traffic from LAN to VPN
+iptables -A FORWARD -i $BRIDGE -s $NET_LOCAL10 -o $IF_AKSVPN -j ACCEPT
+iptables -A FORWARD -i $BRIDGE -s $NET_LOCAL11 -o $IF_AKSVPN -j ACCEPT
+# Apply NAT to packets going from LAN to VPN
+iptables -t nat -A POSTROUTING -s $NET_LOCAL10 -o $IF_AKSVPN -j MASQUERADE
+iptables -t nat -A POSTROUTING -s $NET_LOCAL11 -o $IF_AKSVPN -j MASQUERADE
+
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv4/conf/all/rp_filter
+echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_source_route
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_redirects
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+
+#################################
+#           The end             #
+#################################
+#   Snippets of discarded code  #
+#################################
+
+# Forwarded ports
+#fports=(9999:192.168.0.190:9999 \
+#	3002:192.168.0.190:80 \
+#       	3003:192.168.0.190:22)
+#
+#for fport in "${fports[@]}"; do 
+#dport="${fport%%:*}"; dest="${fport#*:}"
+#iptables -A INPUT -i $LANIF -p tcp -m conntrack --ctstate NEW --dport "$dport" -j ACCEPT
+#iptables -t nat -A PREROUTING -p tcp -i $LANIF --dport "$dport" -j DNAT --to-destination "$dest"
+#done
+
+# Accept and forward port 9999 to zp-server:9999
+#iptables -A INPUT -i $LANIF -p tcp -m conntrack --ctstate NEW --dport 9999 -j ACCEPT
+#iptables -t nat -A PREROUTING -p tcp -i $LANIF --dport 9999 -j DNAT --to-destination 172.25.0.9:9999
+# Accept and forward port 3002 to zp-server:80
+#iptables -A INPUT -i $LANIF -p tcp -m conntrack --ctstate NEW --dport 3002 -j ACCEPT
+#iptables -t nat -A PREROUTING -p tcp -i $LANIF --dport 3002 -j DNAT --to-destination 172.25.0.9:80
+# Accept and forward port 3003 to zp-server:22
+#iptables -A INPUT -i $LANIF -p tcp -m conntrack --ctstate NEW --dport 3003 -j ACCEPT
+#iptables -t nat -A PREROUTING -p tcp -i $LANIF --dport 3003 -j DNAT --to-destination 172.25.0.9:22
+# Accept port 3004 (aks23 vpn)
+#iptables -A INPUT -i $LANIF -p tcp -m conntrack --ctstate NEW --dport 3004 -j ACCEPT
+
+## Accept new connections from INET to LAN that ask to be forwarded
+#iptables -A FORWARD -i $LANIF ! -s $LOCAL_LAN -o $LANIF -m conntrack --ctstate NEW -j ACCEPT
+## Accept established forwarded connections
+#iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+## Apply NAT to packets forwarded from INET to LAN (to reach internal servers)
+#iptables -t nat -A POSTROUTING ! -s $LOCAL_LAN -o $LANIF -j MASQUERADE
+
+# Accept new connections from INET to VPN that ask to be forwarded
+#iptables -A FORWARD -i $LANIF -o $VPNIF -m conntrack --ctstate NEW -j ACCEPT
+# Accept established forwarded connections
+#iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# Apply NAT to packets forwarded from INET to VPN
+#iptables -t nat -A POSTROUTING -o $VPNIF -j MASQUERADE
+
+# Accept traffic for OpenVPN (clients-TCP) -- TEST
+#iptables -A INPUT -i $BRIDGE -m physdev --physdev-in $IF_LAN -p tcp -m conntrack --ctstate NEW --dport 3003 -j ACCEPT
+# Accept traffic on the tunnel interface
+#iptables -A INPUT -i tun2 -j ACCEPT
+# Forward traffic from client to client
+#iptables -A FORWARD -i tun2 -o tun2 -j ACCEPT
+
+# Drop all IPX traffic
+#iptables -A INPUT -p 224 -j DROP
+#iptables -A FORWARD -p 224 -j DROP

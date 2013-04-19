@@ -1,0 +1,69 @@
+#!/bin/bash
+# rc.firewall for zp-server
+
+modprobe nf_conntrack_ipv4
+
+LANIF="eth0"
+EXTIF="ppp0"
+VPNIF="tun0"
+LOCAL_LAN="192.168.0.0/24"
+GATEWAY="192.168.0.70"
+
+# Open ports
+port_ssh="3001"
+
+# IPv6 is disabled here
+#ip6tables -F
+#ip6tables -P INPUT DROP
+#ip6tables -P FORWARD DROP
+#ip6tables -P OUTPUT DROP
+
+iptables -F
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# Allow all from loopback
+iptables -A INPUT -i lo -j ACCEPT
+# Allow all from LAN
+#iptables -A INPUT -i $LANIF -s $LOCAL_LAN -j ACCEPT
+iptables -A INPUT -i $LANIF -j ACCEPT
+# Allow all from VPN
+iptables -A INPUT -i $VPNIF -j ACCEPT
+
+# Allow test interface tun1 (TCP)
+#iptables -A INPUT -i tun1 -j ACCEPT
+
+## Allow ESTABLISHED from Internet
+#iptables -A INPUT -i $EXTIF -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+## Limit ICMP from Internet
+#iptables -A INPUT -i $EXTIF -p icmp -m limit --limit 3/min -j ACCEPT
+## Allow direct SSH from the office
+##iptables -A INPUT -i $EXTIF -p tcp -s 83.170.208.10 -m conntrack --ctstate NEW --dport $port_ssh -j ACCEPT
+
+# Rate-limit OpenSSH from Internet: 3 conn / 1 min
+iptables -A INPUT -p tcp --dport $port_ssh -m conntrack --ctstate NEW -m recent --set --name SSH
+iptables -A INPUT -p tcp --dport $port_ssh -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 4 --rttl --name SSH -j REJECT
+iptables -A INPUT -p tcp -m conntrack --ctstate NEW --dport $port_ssh -j ACCEPT
+
+## Forward traffic from LAN to Internet
+#iptables -A FORWARD -i $LANIF -m iprange \
+#	--src-range 192.168.0.97-192.168.0.99 -o $EXTIF -j ACCEPT
+## Accept established forwarded connections
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+## Apply NAT to packets going from LAN to Internet
+#iptables -t nat -A POSTROUTING -s $LOCAL_LAN -o $EXTIF -j MASQUERADE
+
+# Give access to the internal network
+iptables -t nat -A PREROUTING -d 172.25.3.0/24 -j NETMAP --to 192.168.0.0/24
+# Only from the office
+iptables -A FORWARD -i $VPNIF -s 172.25.0.1 -o $LANIF -j ACCEPT
+# Cover the LAN with NAT
+iptables -t nat -A POSTROUTING -s 172.25.0.1 -o $LANIF -j MASQUERADE
+
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv4/conf/all/rp_filter
+echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_source_route
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_redirects
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
