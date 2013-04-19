@@ -1,0 +1,69 @@
+#!/bin/bash
+# marathon: Listen for incoming connections and run defined commands
+# Written by V'yacheslav Stetskevych, 2010
+# Version 0.1 20100705
+
+# HOW TO AUTOMATICALLY FIND OUT IF THE PROGRAM IS RUN FROM INETD?
+# Implement log()
+# Set a default portnum, and pass "nc-start" as $1
+
+# This script can use either inetd or nc.
+# If $1 is "inetd" or "nc-go", just read stdin and do the job.
+# If $1 is a port num, dispatch nc on that port, that will launch this script
+# with the parameter "nc-go" and do the job.
+
+scriptname="$0"
+basenam() {
+	echo "${scriptname##*/}"
+}
+
+log() {
+	true
+}
+
+param="$1"
+if [ "$param" = "inetd" ]; then
+	method=inetd
+elif [ "$param" = "3000" ]; then # need a test for a number (a regex?) here
+	if [ "$param" -lt 1024 -a "$(id -u)" -eq 0 ]; then
+		echo "Got root? Poor man's option is to use a port > 1024." >&2
+		exit 1
+	fi
+	method=nc
+	port="$param"
+elif [ "$param" = "nc-go" ]; then
+	method=nc-go
+else
+	echo "Usage: $(basenam) inetd|portnum" >&2
+	exit 1
+fi
+
+process_data() {
+	read -r command;
+	case "$command" in
+		date)
+			date
+			echo OK
+			;;
+		*)
+			echo "Illegal command request: $command"
+			echo INVALID
+			;;
+	esac
+}
+
+echo "Starting $(basenum) with the method: $method"
+
+case "$method" in
+	inetd|nc-go)
+		process_data
+		;;
+	nc)
+		nc -l -p "$port" -e "$0 nc-go" &
+		;;
+esac	
+
+#export port=${port:-$1} # inherit $1 as port
+#nc -l -p "$port" -e "$0" & # await further connections on this port
+## do the work on the 2nd+ invocation
+#[ "$1" ] || { echo -n "triggered date: "; date; }
