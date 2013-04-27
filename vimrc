@@ -23,4 +23,5 @@ set tabstop=2
 set shiftwidth=2
 set expandtab
 set background=dark
+set modeline
 "set mouse=a    " Enable mouse usage (all modes)
