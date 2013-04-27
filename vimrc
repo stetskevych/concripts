@@ -25,3 +25,6 @@ set expandtab
 set background=dark
 set modeline
 "set mouse=a    " Enable mouse usage (all modes)
+
+" Modeline for scripts:
+" # vim: set ts=2 sw=2 et:
