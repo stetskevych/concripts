@@ -1,0 +1,50 @@
+#!/bin/sh
+# slacksync
+# Use rsync to mirror a Slackware directory tree.
+# Usage: slacksync 32 13.0 [rsync-params]
+
+ARCHS="32|64"
+VERSIONS="current|13.1|13.0|12.2|11.0"
+SYNCDIR="/home/mirror"
+#SYNCURL="rsync.slackware.at::slackware"
+SYNCURL="rsync.osuosl.org::slackware"
+
+usage() {
+	echo "Usage: $0 arch version [rsync-params]"
+	echo "Archs available: {$ARCHS}."
+	echo "Versions available: {$VERSIONS}."
+	exit 1
+}
+
+case $1 in
+	64)
+		ARCH="$1";;
+	32)
+		unset ARCH;;
+	*)
+		usage;;
+esac
+shift
+
+shopt -s extglob
+case $1 in
+	+($VERSIONS) )
+		VERSION="$1";;
+	*)
+		usage;;
+esac
+shift
+
+RSYNCARGS="$*" # feed the remaining arguments to rsync :-)
+
+if [ ! -d $SYNCDIR/slackware$ARCH-$VERSION ]; then
+	echo "Sync directory does not exist. Do you want me to create it? (Y/n)"
+	read; [ "$REPLY" = n ] && { echo "Aborting, bye."; exit 1; }
+	mkdir -p $SYNCDIR/slackware$ARCH-$VERSION || exit 1
+fi
+
+echo "Syncing slackware$ARCH-$VERSION to $SYNCDIR..."
+
+cd ${SYNCDIR}/slackware$ARCH-$VERSION || exit 1
+rsync $1 -vaz $RSYNCARGS --progress --delete-after --exclude "source/*" ${SYNCURL}/slackware$ARCH-$VERSION/ .
+
