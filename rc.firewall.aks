@@ -1,0 +1,48 @@
+#!/bin/sh
+# rc.firewall for aks
+
+LANIF="eth0" # class
+EXTIF="eth1" # university
+LOCAL_LAN="192.168.23.0/25"
+VPNIF="tun0"
+
+modprobe nf_conntrack_ipv4
+
+ip6tables -F
+ip6tables -P INPUT DROP
+ip6tables -P FORWARD DROP
+ip6tables -P OUTPUT DROP
+
+iptables -F
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+iptables -A INPUT -i lo -j ACCEPT
+
+# SSH limit from everywhere
+iptables -A INPUT -p tcp --dport 22 -m state --state NEW -m recent --set --name SSH
+iptables -A INPUT -p tcp --dport 22 -m state --state NEW -m recent  --update --seconds 180 --hitcount 4 --rttl --name SSH -j DROP
+iptables -A INPUT -p tcp -m conntrack --ctstate NEW --dport 22 -j ACCEPT
+
+# Accept traffic on the VPN interface
+iptables -A INPUT -i $VPNIF -j ACCEPT
+# Accept traffic from lan
+iptables -A INPUT -i $LANIF -s $LOCAL_LAN -j ACCEPT
+# Accept back connections initiated by dino
+iptables -A INPUT -i $EXTIF -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Perform NAT for class
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i $LANIF -s $LOCAL_LAN -o $EXTIF -j ACCEPT
+iptables -t nat -A POSTROUTING -s $LOCAL_LAN -o $EXTIF -j MASQUERADE
+
+# Perform reverse NAT for VPN
+iptables -A FORWARD -i $VPNIF -o $LANIF -j ACCEPT
+iptables -t nat -A POSTROUTING -o $LANIF -j MASQUERADE
+
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv4/conf/all/rp_filter
+echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts
+echo 0 > /proc/sys/net/ipv4/conf/all/accept_source_route
+echo 1 > /proc/sys/net/ipv4/tcp_syncookies
