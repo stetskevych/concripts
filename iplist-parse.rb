@@ -5,7 +5,7 @@
 require "resolv"
 
 FILES = ['iplist1.txt', 'iplist2.txt']
-IP_PREFIX = /212|217/
+IP_PREFIX = /^212|^217/
 
 @iplist ||= []
 
