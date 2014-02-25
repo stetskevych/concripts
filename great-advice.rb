@@ -17,6 +17,8 @@ ADVICE_URI = 'http://fucking-great-advice.ru/api/random'
 class String
   def sanitize_html
     self.gsub('&nbsp;', ' ')
+        .gsub('&laquo;', '"')
+        .gsub('&raquo;', '"')
         .gsub('&#151;', '—')
         .gsub(/<\/?[^>]+>/, '')
   end
