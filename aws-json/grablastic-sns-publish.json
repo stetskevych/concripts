@@ -1,0 +1,26 @@
+{
+  "Statement": [
+  {
+    "Sid": "Stmt1329999728872",
+    "Action": [
+      "ec2:AssociateAddress",
+    "ec2:DescribeAddresses",
+    "ec2:DisassociateAddress"
+      ],
+    "Effect": "Allow",
+    "Resource": [
+      "*"
+      ]
+  },
+  {
+    "Sid": "Stmt1329999749513",
+    "Action": [
+      "sns:Publish"
+      ],
+    "Effect": "Allow",
+    "Resource": [
+      "arn:aws:sns:eu-west-1:953068017687:notifications"
+      ]
+  }
+  ]
+}

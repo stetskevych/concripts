@@ -1,0 +1,8 @@
+{
+  "ErrorDocument": {
+    "Key": "notfound.html"
+  },
+  "IndexDocument": {
+    "Suffix": "index.html"
+  }
+}

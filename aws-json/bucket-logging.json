@@ -1,0 +1,23 @@
+{
+  "LoggingEnabled": {
+    "TargetBucket": "vst-website-logs",
+    "TargetPrefix": "vst-website/",
+    "TargetGrants": [
+    {
+      "Grantee": {
+        "Type": "AmazonCustomerByEmail",
+        "EmailAddress": "cloud-service-operations-sandbox@email.was"
+      },
+      "Permission": "FULL_CONTROL"
+    },
+    {
+      "Grantee": {
+        "Type": "Group",
+        "URI": "http://acs.amazonaws.com/groups/global/AllUsers"
+      },
+      "Permission": "READ"
+    }
+    ]
+  }
+}
+

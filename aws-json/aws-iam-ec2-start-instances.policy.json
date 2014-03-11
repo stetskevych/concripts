@@ -1,0 +1,8 @@
+{
+  "Version":"2012-10-17",
+  "Statement":[{
+    "Effect":"Allow",
+    "Action":"ec2:StartInstances",
+    "Resource":"arn:aws:ec2:eu-west-1:118129359339:instance/*"
+  }]
+}
