@@ -1,0 +1,37 @@
+#!/bin/bash
+# quick and hacky script to add sftp chroot users on centos
+
+user="$1"
+webdir="$2"
+if [ -z "$user" -o -z "$webdir" ]; then
+  echo "Usage: $0 <user> <webdir>"
+  echo "webdir will be created in /var/www/websites/"
+  exit 1
+fi
+
+set -e
+
+useradd -g sftpchroot -s /sbin/nologin -d /home/"$user" -m -N "$user"
+rm /home/"$user"/.bash*
+mkdir /home/"$user"/"$webdir"
+chown -R root:root /home/"$user"
+chmod 755 /home/"$user"
+
+if [ ! -d /var/www/websites/"$webdir" ]; then
+  mkdir /var/www/websites/"$webdir"
+fi
+chown -R "$user":sftpchroot /var/www/websites/"$webdir"
+echo "/var/www/websites/"$webdir" /home/"$user"/"$webdir" bind defaults,bind 0 0" >> /etc/fstab
+mount -a
+
+echo "Set password for user:"
+echo "# passwd $user"
+echo 'DONE'
+
+# this block goes to the end of /etc/ssh/sshd_config
+# Match Group sftpchroot
+#        ChrootDirectory /home/%u
+#        X11Forwarding no
+#        AllowTcpForwarding no
+#        ForceCommand internal-sftp
+# and don't forget to # service sshd restart
