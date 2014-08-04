@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Fregat TV
+Comment=Fregat ISP IPTV
+Exec=vlc http://itv.fregat.net/playlist/default.m3u
+Icon=totem-tv.png
+Terminal=false
+Type=Application
+Encoding=UTF-8
+Categories=Multimedia;Application;
