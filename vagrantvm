@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+# vagrantvm: provisions a new VM using vagrant and chef-solo
+
+# THIS SCRIPT IS INCOMPLETE WITHOUT THE CORRESPONDING VAGRANT AND CHEF TEMPLATES
+# THE TEMPLATES ARE NOT INCLUDED
+
+# TODO: Secure VM ports access from outside (might use iptables)
+#       https://github.com/mitchellh/vagrant/pull/1121.patch
+
+user="${user:-vagrant}" # user that runs VMs
+wdir="${wdir:-/home/$user/pool}" # working dir
+tdir="${tdir:-$wdir/template}" # template dir for new VM
+nginxconf="/etc/nginx/conf.d"
+recipes=( misc apt packages flip build-essential mail first_run_only ) # core recipe list, do not edit
+
+# Sanity check
+if ! grep -q "$user" /etc/passwd || \
+  [ ! -d "$wdir" ] || \
+  [ ! -d "$tdir" ]; then
+  echo "ERROR: need to have user $user, dirs $wdir and $tdir" >&2
+  exit 1
+fi
+
+containsElement() {
+  local e
+  for e in "${@:2}"; do [[ "$e" == "$1" ]] && return 0; done
+  return 1
+}
+
+autoselectPort() {
+  local port=10000
+  while egrep -q "proxy_pass.+$port" "$nginxconf"/*.conf ||
+        egrep -q "config.vm.forward_port.+$port" "$wdir"/*/Vagrantfile; do
+    ((port++))
+  done
+  echo "$port"
+}
+
+autoselectIP() {
+  local ip=5
+  local network="192.168.56."
+  while grep -q "${network}${ip}" "$wdir"/*/Vagrantfile; do
+    ((ip++))
+    if (( "$ip" == 255 )); then
+      echo "ERROR: No free host-only IP addresses left." >&2
+      exit 1
+    fi
+  done
+  echo "${network}${ip}" 
+}
+
+usage() {
+  echo "Example run: $0 --id 36 --names 'dev.example.company.org;dev2.example.company.org' --recipes nginx,varnish,percona --dbdump /tmp/db.sql.gz" >&2
+  echo "Available options: --id, --names, --delete, --list, --recipes, --dbdump, --port, --dry-run" >&2
+  echo "Available recipes:" >&2
+  echo "$(ls -C ${tdir}/cookbooks/)" >&2
+}
+
+while :
+do
+  case "$1" in
+    -h | --help | -\?)
+      usage
+      exit 0
+      ;;
+    -i | --id)
+      id="$2" # redmine project id from ldap
+      shift 2
+      ;;
+    -h | --names | --name)
+      names="$2" # (determined automatically) array of ';'-separated vm hostnames
+      shift 2
+      ;;
+    -p | --port)
+      port="$2" # (determined automatically) port that will be forwarded to the VM port 80
+      shift 2
+      ;;
+    -r | --recipes | --recipe)
+      IFS=',' read -r -a recipes_user <<< "$2" # chef recipe list
+      shift 2
+      ;;
+    -m | --dbdump) # mysql db dump
+      dbdump="$2"
+      shift 2
+      ;;
+    -d | --delete | --kill | --destroy | --remove) # delete specified VM
+      delete="1"
+      shift
+      ;;
+    -l | --list) # list existing VMs
+      list="1"
+      shift
+      ;;
+    -n | --dry-run) # only create the VM, but do not run/provision it
+      dryrun="1"
+      shift
+      ;;
+    -*)
+      echo "ERROR: Unknown option \"$1\"" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+### LIST EXISTING VMS ###
+if [ ! -z "$list" ]; then
+  echo "VM list:"
+  for vmname in "${wdir}"/*; do
+    [[ "$vmname" == ${wdir}"/template" ]] && continue
+    su - vagrant -c " \
+      cd "${vmname}" && \
+      vagrant status | grep default | sed 's#default#"${vmname##*/}"#' "
+  done
+  exit 0
+fi
+
+### FIGURE OUT VM NAME ###
+
+# if --id is supplied, take name from ldap
+if [ ! -z "$id" ]; then
+  ldapresult="$(ldapsearch -LLLQ -b "ou=projects,dc=company,dc=org" "(cn=$id)" o url | perl -p00e 's/\r?\n //g' | grep 'url:' | cut -d' ' -f2)"
+  IFS=';' read -r -a names <<< "$ldapresult"
+fi
+
+if [ ! -z "${names[*]}" ]; then
+  name="${names[0]}"
+else
+  echo "ERROR: please specify --id or --name" >&2
+  usage
+  exit 1
+fi
+
+# This is a one-word hostname, for chef templates.
+# Example for "dev.test.company.org": "test"
+myhostname="$(echo $name | rev | cut -d'.' -f3 | rev)"
+if [ -z "$myhostname" ]; then
+  echo "ERROR: please use at least a 3-level hostname, i.e. test.company.org"
+  usage
+  exit 1
+fi
+
+### DELETE EXISTING VM ###
+
+if [ ! -z "$delete" ]; then
+
+  read -p "Are you sure you want to DELETE VM $name? [y/N] " answer
+  if ! [[ $answer == [Yy]* ]]; then
+    exit 0
+  fi
+
+  echo "Deleting vm $name..."
+
+  if [ "$name" == "template" ]; then
+    echo "ERROR: refusing to delete the template VM!" >&2
+    exit 1
+  fi
+
+  if [ -d "${wdir}/${name}" ]; then
+    su - vagrant -c " \
+    pushd "${wdir}/${name}" && \
+    vagrant halt && \
+    vagrant destroy --force && \
+    popd && \
+    rm -Rf "${wdir}/${name}" && \
+    echo 'Stopped and deleted VM' "
+  else
+    echo "WARN: no such VM: $name" >&2
+  fi
+
+  if [ -f "${nginxconf}/${name}.conf" ]; then
+    rm "${nginxconf}/${name}.conf" || exit 1
+    echo "Deleted nginx config file"
+    service nginx restart
+  else
+    echo "WARN: no such file: ${nginxconf}/${name}.conf"
+  fi
+
+  echo "Success."
+  exit 0
+fi
+
+### CREATE NEW VM ###
+
+if [ -d "${wdir}/${name}" ]; then
+  echo "ERROR: the VM named $name already exists" >&2
+  usage
+  exit 1
+fi
+
+if [ -f "${nginxconf}/${name}.conf" ]; then
+  echo "ERROR: an nginx config named ${name}.conf already exists" >&2
+  usage
+  exit 1
+fi
+
+if [ -z "${recipes_user[*]}" ]; then
+  echo "ERROR: please specify a recipe list" >&2
+  usage
+  exit 1
+fi
+
+if [ ! -z "$dbdump" ] && ! grep -q "gzip compressed data" < <(file "$dbdump" 2>&1); then
+  echo "ERROR: $dbdump must be a gzip compressed sql file" >&2
+  exit 1
+fi
+
+echo "Creating VM $name..." 
+
+echo "Forming recipe list..."
+recipes=( "${recipes[@]}" "${recipes_user[@]}" )
+# Check for malformed recipe names
+for recipe in "${recipes[@]}"; do
+  if grep -q '::' <<< "$recipe"; then
+    # Cookbook name with a subrecipe
+    bookname="$(echo "$recipe" | cut -d':' -f1)"
+    subname="$(echo "$recipe" | cut -d':' -f3)"
+    if [ ! -d "${tdir}/cookbooks/${bookname}" ] || \
+       [ ! -f "${tdir}/cookbooks/${bookname}/recipes/${subname}.rb" ]; then
+      echo "ERROR: no such recipe: $recipe" >&2
+      exit 1
+    fi
+  else
+    # Full cookbook name
+    if [ ! -d "${tdir}/cookbooks/${recipe}" ]; then
+      echo "ERROR: no such recipe: $recipe" >&2
+      exit 1
+    fi
+  fi
+done
+echo "Active recipe list: ${recipes[@]}"
+
+echo "Copying VM from template..."
+cp -a "$tdir" "${wdir}/${name}" || exit 1
+chown -R "$user":"$user" "${wdir}/${name}" || exit 1
+
+echo -n "Choosing a free port... "
+[ -z "$port" ] && port="$(autoselectPort)"
+echo "$port"
+
+echo -n "Choosing a free host-only IP... "
+ip="$(autoselectIP)"
+echo "$ip"
+
+echo "Modifying nginx proxy config..."
+sed -i "s#@NAMES@#${names[@]}#;s#@NAME@#$name#;s#@PORT@#$port#" "${wdir}/${name}/nginx.conf" || exit 1
+if [ -z "$dryrun" ]; then
+  echo "Installing nginx proxy config... ${nginxconf}/${name}.conf"
+  cat "${wdir}/${name}/nginx.conf" > "${nginxconf}/${name}.conf" 
+  service nginx restart || exit 1
+fi
+
+if [ ! -z "$dbdump" ]; then
+  echo "Copying mysql DB dump..."
+  cp "$dbdump" "${wdir}/${name}/cookbooks/percona/files/debian/db.sql.gz" || exit 1
+fi
+
+vagrantfile="${wdir}/${name}/Vagrantfile"
+echo "Modifying Vagrantfile: $vagrantfile"
+# Set variables
+sed -i "s#@NAME@#$name#;s#@PORT@#$port#;s#@HOSTONLYIP@#$ip#" "$vagrantfile" || exit 1
+# Edit recipe list
+cp "$vagrantfile" "${vagrantfile}.temp" || exit 1
+while IFS= read -r line; do
+  # skip irrelevant lines
+  grep -q "chef.add_recipe" <<< "$line" || continue
+  # parse line, get recipe name
+  recipename="$(echo "$line" | cut -d'"' -f2)"
+  # if given recipe is not needed for current VM, delete it
+  if ! containsElement "$recipename" "${recipes[@]}"; then
+    sed -i "/chef.add_recipe \"$recipename\"/d" "${vagrantfile}.temp"
+  fi
+done < "$vagrantfile"
+# Set short hostname in chef JSON
+echo "Setting chef hostname to $myhostname..."
+sed -i "s#@MYHOSTNAME@#$myhostname#" "${vagrantfile}.temp" || exit 1
+# Set up git repo
+if containsElement "gitrepo" "${recipes[@]}"; then
+  gitrepo="$(ldapsearch -LLLQ -b "ou=projects,dc=company,dc=org" "(cn=$id)" o projectname | perl -p00e 's/\r?\n //g' | grep 'projectname:' | cut -d' ' -f2)"
+  sed -i "s#@GITREPO@#$gitrepo#" "${vagrantfile}.temp" || exit 1
+fi
+# Switch http listen port depending on presence of varnish
+if containsElement "varnish" "${recipes[@]}"; then
+  sed -i "s#@HTTPLISTEN@#81#" "${vagrantfile}.temp" || exit 1
+else
+  sed -i "s#@HTTPLISTEN@#80#" "${vagrantfile}.temp" || exit 1
+fi
+# Move back the edited Vagrantfile.temp
+mv "${vagrantfile}.temp" "$vagrantfile" || exit 1
+
+if [ -z "$dryrun" ]; then
+  # Change user to vagrant and run the VM
+  echo "Running the VM..."
+  su - vagrant -c "cd $wdir/$name && vagrant up"
+else
+  echo "Dry run requested; stop. Your new VM is located in $wdir/$name"
+  exit 0
+fi
+
+# vim: set ts=2 sw=2 expandtab:
