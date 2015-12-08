@@ -1,0 +1,8 @@
+# Archlinux: set up Steam to run on the Radeon GPU
+# Disable any GL compositor to avoid black screen. I.e. set kwin to XRender mode.
+steamstart() {
+  xrandr --setprovideroffloadsink radeon Intel && \
+    DRI_PRIME=1 glxinfo | grep "OpenGL renderer" && \
+    find ~/.steam/root/ \( -name "libgcc_s.so*" -o -name "libstdc++.so*" -o -name "libxcb.so*" -o -name "libasound.so*" \) -print -delete && \
+    DRI_PRIME=1 steam
+}
