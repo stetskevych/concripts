@@ -16,6 +16,13 @@ dotfiles=(.bash_history .bash_logout .bash_profile .bashrc .screenrc .config .fo
 
 [[ ! -d "$DIR" ]] && mkdir -p $DIR
 
+read -p "Have you deleted Chrome cache? " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]
+then
+  exit 1
+fi
+
 read -s -p "GPG Passphrase: " PASS
 
 yes | pacman -Sc
