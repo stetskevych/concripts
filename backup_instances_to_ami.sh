@@ -1,6 +1,6 @@
 #!/bin/bash
 # backup_instances_to_ami.sh
-# This script is used to backup (windows) instances to launchable AMIs
+# This script is used to backup AWS instances to launchable AMIs
 
 INSTANCES=( instancename1:us-east-1 instancename2:eu-west-1 )
 DATE="$(date +%Y%m%d)"
