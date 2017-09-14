@@ -16,7 +16,8 @@ COMPRESSEXT='gz'
 #COMPRESSOR='xz -c -z - --threads=0'
 #COMPRESSEXT='xz'
 
-dotfiles=(.bash_history .bash_logout .bash_profile .bashrc .screenrc .config .kde4 .ssh .aws .Skype)
+dotfiles=(.bash_history .bash_logout .bash_profile .bashrc .screenrc .config .gnupg .kde4 .ssh .aws)
+excludes="--exclude swapfile* --exclude var/cache/pacman/pkg/*"
 
 [[ ! -d "$DIR" ]] && mkdir -p $DIR
 
@@ -30,7 +31,7 @@ fi
 read -s -p "GPG Passphrase: " PASS
 
 yes | pacman -Sc
-journalctl --vacuum-size=100M
+journalctl --vacuum-size=50M
 
 [[ ! -p backup.fifo ]] && mkfifo backup.fifo
 exec 3<>backup.fifo
@@ -38,13 +39,11 @@ exec 3<>backup.fifo
 set -euo pipefail
 
 echo "$PASS" >&3
-tar -cvf - -C /boot --numeric-owner --preserve-permissions --one-file-system /boot | $COMPRESSOR | gpg -c --batch --no-tty --yes --passphrase-fd 3 -o $DIR/arch-boot-${DATE}.tar.$COMPRESSEXT.gpg
+tar $excludes -cvf - -C / --numeric-owner --preserve-permissions --one-file-system / | $COMPRESSOR | gpg -c --cipher-algo AES256 --batch --no-tty --yes --passphrase-fd 3 -o $DIR/arch-root-${DATE}.tar.$COMPRESSEXT.gpg
 echo "$PASS" >&3
-tar -cvf - -C /home/"$USER" --numeric-owner --preserve-permissions --one-file-system "${dotfiles[@]}" | $COMPRESSOR | gpg -c --batch --no-tty --yes --passphrase-fd 3 -o $DIR/arch-dotfiles-${DATE}.tar.$COMPRESSEXT.gpg
+tar -cvf - -C /boot --numeric-owner --preserve-permissions --one-file-system /boot | $COMPRESSOR | gpg -c --cipher-algo AES256 --batch --no-tty --yes --passphrase-fd 3 -o $DIR/arch-boot-${DATE}.tar.$COMPRESSEXT.gpg
 echo "$PASS" >&3
-tar -cvf - -C / --numeric-owner --preserve-permissions --one-file-system / | $COMPRESSOR | gpg -c --batch --no-tty --yes --passphrase-fd 3 -o $DIR/arch-root-${DATE}.tar.$COMPRESSEXT.gpg
-
-unset PASS
+tar -cvf - -C /home/"$USER" --numeric-owner --preserve-permissions --one-file-system "${dotfiles[@]}" | $COMPRESSOR | gpg -c --cipher-algo AES256 --batch --no-tty --yes --passphrase-fd 3 -o $DIR/arch-dotfiles-${DATE}.tar.$COMPRESSEXT.gpg
 
 chown -R "$USER":users "$DIR"
 
